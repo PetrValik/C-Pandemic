@@ -1,0 +1,416 @@
+---
+title: "HW06: Pandémia s.r.o."
+layout: "homework"
+list-of-files: ["src/main.c", "src/*.c", "src/*.h"]
+solution-path: /home/kontr/pb071/hw06/pandemic
+publish: now
+deadline-early: ~
+deadline-final: 2022-06-20 24:00
+authors:
+  - xsabol
+  - xfocko
+  - xkrebs
+---
+
+[#intro]
+== Predstavenie úlohy
+
+Modelovanie a simulácie sú veľmi efektívny nástroj, ako pomocou vhodnej úrovne
+abstrakcie modelovať a skúmať aj veľmi zložité systémy.
+Jednou z najpoužívanejších oblastí je takzvaný
+link:https://en.wikipedia.org/wiki/Agent-based_model[Agent-based modeling].
+
+Ide o výpočetný model, ktorý sleduje akcie a interakcie jednotlivých agentov.
+Na to, aby sme mohli nejaký jav skúmať pomocou takejto simulácie, si však musíme
+najprv vytvoriť vhodné prostredie.
+
+Mnohí z vás určite poznajú hru _Plague Inc._, v ktorej hráte na strane vírusu
+a snažíte sa vyhubiť ľudstvo. My si v tejto domácej úlohe naprogramujeme
+zjednodušenú verziu a viac, ako koniec ľudstva, nás bude zaujímať spôsob, akým
+sa vírus šíri a čo všetko ovplyvňuje jeho nákazlivosť.
+
+[#assignment]
+== Zadanie
+
+Napíšte program, ktorý z príkazového riadku a súborov načíta informácie
+o víruse, agentoch a svete, v ktorom bude simulácia prebiehať.
+Následne simuláciu spustite a na textový výstup vypíšte informácie o jej
+priebehu.
+
+Použitie výsledného programu bude vyzerať takto:
+
+[source]
+----
+./pandemic [OPTIONS] agents.csv world.csv
+----
+
+Kde `[OPTIONS]` sú voliteľné prepínače programu, `world.csv` je súbor popisujúci
+svet a `agents.csv` je súbor s agentmi
+(link:#assignment-world[Detailný popis v príslušnom odstavci]).
+
+[#assignment-options]
+== Prepínače
+
+`--lethality <float>`::
+Prepínač popisujúci smrteľnosť vírusu, používa sa vo vzorci pre výpočet úmrtí
+agentov. Ak prepínač nie je špecifikovaný, `lethality` bude nastavené na hodnotu
+`0.5`. Hodnota musí byť z rozsahu `[0, 1]`.
+
+`--infectivity <float>`::
+Infekčnosť vírusu, používa sa vo vzorci pre výpočet prenášania vírusu medzi
+agentmi. V prípade, že prepínač nie je špecifikovaný, nastavte hodnotu na `0.5`.
+Hodnota musí byť z rozsahu `[0, 1]`.
+
+`--duration <float>`::
+Doba infekčnosti, používa sa vo vzorci pre výpočet, či sa daný agent vylieči
+alebo nie. Ak nie je špecifikovaná, očakávaná hodnota je `0.5`. Hodnota musí byť
+z rozsahu `[0, 1]`.
+
+`--vaccine-modifier <float>`::
+Reálne nezáporné číslo, ktoré reprezentuje účinnosť vakcíny, ktorou sú _všetci_
+agenti zaočkovaní. Predvolná hodnota je `1.2`.
+
+`--max-steps <int>`::
+Nezáporné celé číslo popisujúce počet kôl simulácie. Ak nie toto číslo
+špecifikované, očakáva sa, že vaša simulácia bude bežať až do chvíle, kým nie sú
+všetci agenti zdraví alebo mŕtvi.
+
+`--random-seed <int>`::
+Seed, ktorý potrebujeme byť schopní nastaviť pre účely testovania. V prípade,
+že prepínač nie je špecifikovaný, predvolená hodnota je `time(NULL)`.
+Nezabudnite tento seed nastaviť pomocou `srand(3)`
+*pred samotným spustením simulácie*.
++
+[WARNING]
+V prípade, že porovnávate správanie referenčnej implementácie voči tej vašej,
+nezabudnite tento prepínač nastaviť na rovnakú hodnotu pre oba programy.
+
+`--verbose`::
+V prípade, že je zvolený tento prepínač, požaduje sa, aby váš program vypisoval
+informáciu o jednotlivých kolách. Bude nás zaujímať, kto koho nakazil, kto sa
+vyliečil a kto zomrel. Detailný formát výpisu je
+v link:#assignment-output[časti o vyhodnotení priebehu].
+
+[#assignment-virus]
+== Vírus
+
+Rovnako ako občas v skutočnom svete, aj v tejto úlohe bude pre nás vírus akousi
+záhadnou entitou, o ktorej toho veľa nevieme.  Všetky informácie týkajúce sa
+vírusu sa zadávajú ako prepínače na príkazovom riadku. Pre vírus sú relevantné
+
+1. Lethality `--lethality <float>`
+2. Infectivity `--infectivity <float>`
+3. Duration `--duration <float>`
+
+Ako ovplyvňujú priebeh samotnej simulácie sa dočítate v časti
+link:#assignment-iteration[o jej priebehu].
+
+[#assignment-world]
+== Svet
+
+Svet budeme reprezentovať ako
+link:https://en.wikipedia.org/wiki/Complete_graph[úplný graf], ktorého vrcholy
+predstavujú miesta, v ktorých sa združujú agenti.
+
+Súbor bude vo formáte
+link:https://en.wikipedia.org/wiki/Comma-separated_values[CSV], kde každý riadok
+bude reprezentovať jeden vrchol nášho grafu. Každý validný riadok bude mať
+nasledujúce stĺpce:
+
+[source,csv]
+----
+id;name;exposure
+----
+
+1. `id <int>` - nezáporný celočíselný _unikátny_ identifikátor daného miesta
+2. `name <reťazec>` - názov daného miesta, používať ho budeme pri výpise
+   informácií o simulácii. Implementácia musí podporovať reťazec s dĺžkou
+   aspoň 16 ASCII znakov.
+3. `exposure <float>` - nezáporné reálne číslo, ktoré ovplyvňuje šírenie vírusu
+   v danom vrchole grafu.
+
+Príklad súboru so svetom:
+
+[source]
+----
+$ cat Bratislava.csv
+----
+
+[source,csv]
+----
+1;Robota;0.7
+2;Kostol;0.0
+3;Krčma;1.0
+4;Cintorín;0.0
+5;Domov;0.4
+----
+
+[TIP]
+Formát CSV nie je úplne štandardizovaný, vo väčšine prípadov obsahuje prvý riadok
+názvy jednotlivých stĺpcov. V celom zadaní predpokladáme, že vstupný súbor
+takýto riadok neobsahuje.
+
+V prípade, že vášmu programu bude dodaná cesta ku súboru so svetom, bude to vždy
+posledný argument volania programu.
+
+V prípade, že vás článok o úplnom grafe viac zmiatol než obohatil, stačí ak
+rozumiete, že medzi každým vrcholom vedie hrana. V praxi to znamená, že agenti
+sa môžu (a budú) pohybovať medzi **ľubovoľnými** dvoma vrcholmi, podľa toho ako
+to majú špecifikované vo svojom chovaní.
+
+[CAUTION]
+Overte, že pre každý riadok kontrolujete správny počet stĺpcov. Predovšetkým
+`id;;hocičo` alebo `id;name;exposure;eyecolor` nie sú validné riadky.
+
+[TIP]
+Pri načítaní súboru by sa vám mohla zísť funkcia `strtok(3)`. Ak ste zabudli,
+ako sa s ňou pracuje, pripomenúť si to môžete v
+link:https://www.fi.muni.cz/pb071/seminars/seminar-05/[cvičení 5].
+
+[#assignment-agent]
+== Agenti
+
+Podobne ako svet, aj súbor s agentmi bude vo formáte CSV. Jeden riadok zodpovedá
+jednému agentovi, význam jednotlivých stĺpcov je nasledujúci:
+
+[source,csv]
+----
+id;route;is_vaccinated;immunity;is_infected
+----
+
+`id <int>`::
+Nezáporný celočíselný _unikátny_ identifikátor agenta
+
+`route <reťazec>`::
+Agentova cesta svetom, čísla zodpovedajú identifikátorom
+jednotlivých miest v grafe. Z posledného vrcholu sa agent vracia na prvý.
+Cesta je zadaná ako postupnosť identifikátorov miest oddelených znakom `-`.
+Všetky vrcholy cesty musia vo svete existovať. Implementácia musí podporovať
+cesty s aspoň 256 vrcholmi.
+
+`is_vaccinated <bool>`::
+Reprezentuje zaočkovanosť agenta, používa sa v priebehu
+simulácie. Akceptované hodnoty sú `0` pre nezaočkovaného agenta a `1` pre
+zaočkovaného.
+
+`immunity <float>`::
+Agentova prirodzená imunita, rovnako ju budeme využívať pri
+výpočtoch v jednotlivých kolách simulácie. Akceptované sú hodnoty z intervalu
+`[0, 1]`.
+
+`is_infected <bool>`::
+Číslo udávajúce počiatočný stav agenta, 0 znamená, že
+agent je zdravý, 1 značí, že u neho bola zistená prítomnosť vírusu.
+
+Príklad súboru s agentmi:
+
+[source]
+----
+$ cat agents.txt
+----
+
+[source,csv]
+----
+1;4-1-3;1;0.5;0
+2;5-1-3;1;0.5;0
+3;5;1;0.2;0
+4;4;0;0.2;1
+5;5-2-3-1-3;0;0.5;1
+----
+
+Tak ako v prípade súboru so svetom si dajte pozor, aby bol dodržaný správny
+počet stĺpcov.
+
+[#assignment-simulation]
+== Priebeh simulácie
+
+Naša simulácia bude pozostávať z jednotlivých iterácií a končí jedným z možných
+scenárov:
+
+1. Neostal žiadny živý agent
+2. Vírus už nemá žiadneho hostiteľa, teda sú všetci agenti vyliečení
+3. Počet iterácií presiahne vopred stanovené číslo dodané prepínačom
+   `--max-steps`.
+
+Vo všetkých prípadoch je simulácia ukončená a po vašom programe sa očakáva,
+že vypíše výslednú štatistiku.
+
+[#assignment-iteration]
+== Priebeh iterácie
+
+*Fáza presunu*
+
+Agenti sa presúvajú z miesta na miesto určené ich cestou zo vstupného súboru.
+V tomto prípade je jedno, aké poradie presunu agentov zvolíte. Po vašom programe
+sa očákava, že po skončení tejto fázy sú všetci agenti na mieste, do ktorého sa
+podľa svojej cesty mali presunúť.
+
+*Fáza pokroku ochorenia*
+
+Priebeh nákazy u jednotlivca - jednotlivec zomrie, vylieči sa, alebo ostane
+nakazený.
+
+Vzorec pre úmrtie agenta prebieha podľa vzorca:
+
+[source,c]
+----
+roll = (double) rand() / RAND_MAX;
+dead = roll < lethality;
+----
+
+V prípade, že je agent zaočkovaný, tak sa hodnota `roll` násobí príslušnou
+hodnotou `vaccine_modifier`.
+
+Vzorec pre vyliečenie agenta
+
+[source,c]
+----
+roll = (double) rand() / RAND_MAX;
+cured = roll > duration;
+----
+
+*Najprv* vyhodnocujeme či agent prežil, až potom či sa vyliečil.
+
+[WARNING]
+`roll` pre úmrtie a `roll` pre uzdravenie sú dve nezávislé hodnoty.
+
+Táto fáza prebieha postupne v jednotlivých miestach podľa ich číselného
+identifikátora vzostupne od toho najnižšieho. V jednom mieste sa rovnakým
+spôsobom vyhodnocujú jednotliví agenti, t.j. vzostupne od agenta s najnižším
+`id`. V prípade, že agent v tejto fáze zomrie, tak sa v ďalšej fáze neberie do
+úvahy.
+
+*Fáza šírenia nákazy*
+
+Šírenie nákazy v **aktuálnom** mieste pobytu agentov, nákaza sa šíri spôsobom
+každý s každým - t.j. ak agenta nakazí iný agent, agent je nakazený a ďalej do
+priebehu nákazy nevstupuje. V prípade, že agenta nenakazí ani jeden zo zvyšných
+agentov, tak agent ostáva zdravý. Medzi agentmi, ktorí do tejto fázy prišli už
+nakazení, sa nákaza ďalej nešíri. Vírus sa šíri v prípade, že
+
+[source,c]
+----
+roll = (double) rand() / RAND_MAX;
+infected = exposure * roll * infectivity > immunity;
+----
+
+Ak je agent zaočkovaný, tak sa `immunity` násobí príslušnou hodnotou
+`vaccine_modifier`.
+
+[IMPORTANT]
+Aby sme vedeli vašu implementáciu otestovať, je dôležité, aby sa táto fáza
+vyhodnocovala rovnako, ako v referenčnej implementácii. Šírenie začína v mieste
+s najnižším číselným identifikátorom a pokračuje vzostupne, rovnako ako v
+predošlej fáze.
+
+V jednotlivých miestach je poradie agentov jasne dané ich identifikátormi,
+iteruje sa vzostupne od agenta s najnižším identifikátorom.
+
+Agenta môže nakaziť len agent, ktorý je sám nakazený. Nákaza sa šíri atomicky,
+takže v prípade, že sa agent nakazí **v tomto kole** a predtým bol zdravý, tak
+*v tomto kole nákazu nešíri*. Rovnako ho po nakazení *už neskúšajú* nakaziť
+ostatní infikovaní agenti.
+
+V prípade, že sa v jednom mieste nachádzajú agenti s identifikátormi `1`, `5`,
+`12`, `42` a `1337`, a agenti `5` a `1337` sú nakazení, poradie vzájomnej výmeny
+vírusu je nasledovné.
+
+[source]
+----
+5 -> 1
+5 -> 12 \\ infected
+5 -> 42
+1337 -> 1
+1337 -> 42
+----
+
+[#assignment-output]
+== Vyhodnotenie
+
+Po skončení simulácie (jedným z troch vyššie uvedených spôsobov) váš program na
+štandardný výstup vypíšte nasledujúce informácie:
+
+1. Seed, ktorý bol použitý počas behu programu
+2. Informáciu o každom kroku, ktorý začal
+3. Výsledok simulácie
+4. Kumulatívnu štatistiku o prebehnutej simulácii:
+    - celkový počet prenosov vírusu
+    - počet obetí vírusu
+    - počet živých ľudí po skončení simulácie
+5. Miesto s najviac prenosmi vírusu.
+6. Celkový počet krokov simulácie
+
+Formát je nasledujúci:
+
+[source]
+----
+Random seed: 1337
+<VERBOSE INFO>
+<RESULT>
+Statistics:
+	Total infections: A
+	Total deaths: B
+	Number of survivors: C
+Most infectious location:
+	<LOCATION>
+Simulation terminated after N steps.
+----
+
+[WARNING]
+V prípade odsadenia vždy odsadzujte jedným znakom tabulátora.
+
+Kde `<RESULT>` je jeden z možných scenárov:
+
+1. `Step limit expired.` - v prípade, že simulácia neskončila do zadaného počtu
+   krokov
+2. `Population is extinct.` - všetci agenti zomreli
+3. `Virus is extinct.` - aspoň jeden agent je živý a žiaden agent nie je nakazený
+
+A `<LOCATION>` je:
+
+1. `- <PLACE_NAME>: <NUMBER_OF_INFECTED> infections` - ak existuje práve jedno
+   mesto s najväčším počtom novo-nakazených agentov počas celého behu simulácie,
+   t.j. miesto kde sa nákaza najviac šírila.
+2. `Multiple`: v prípade, že najväčší počet nakazených zďieľajú aspoň dve miesta
+
+V prípade, že je špecifikovaný prepínač `--verbose`, od vašej implementácie sa
+očakáva, že bude v každom kole vypisovať nasledujúce informácie v mieste
+`<VERBOSE INFO>`:
+
+- Zmenu stavu agenta, t.j. nakazený agent zomrel, alebo sa nakazený agent vyliečil
+- Informáciu, ktorý agent koho nakazil.
+
+Pre iterácie `S` a `S + 1` vyzerá výstup nasledovne:
+
+[source]
+----
+*** STEP S ***
+Agent 1 has died.
+Agent 3 has recovered.
+Agent 2 has infected agent 4 at School.
+Agent 2 has infected agent 3 at School.
+Agent 8 has infected agent 6 at Office.
+
+*** STEP S + 1 ***
+Agent 8 has infected agent 17 at Office.
+----
+
+V prípade, že váš program bol spustený bez prepínača `--verbose`, nevypisujte na
+mieste `<VERBOSE INFO>` nič.
+
+[#assignment-requirements]
+== Požiadavky
+
+Od vášho programu sa očakáva, že v prípade chyby korektne uvoľní všetky
+alokované zdroje a skončí s nenulovým návratovým kódom a príslušnou chybovou
+hláškou.
+
+V prípade, že simulácia prebehne v poriadku, na konci vypíše súhrnnú štatistiku
+o jej priebehu a skončí s nulovým návratovým kódom. V prípade spustenia
+s prepínačom `--verbose` sa takisto očakávajú informácie o jej priebehu
+v jednotlivých krokoch.
+
+Váš program vypisuje všetky informácie na štandardný textový (prípadne chybový)
+výstup. V prípade, že si chcete správanie otestovať proti referenčnej
+implementácii, odporúčame si výstupy presmerovať do súborov, a tieto súbory
+potom porovnať pomocou príkazu `diff(1)`.
